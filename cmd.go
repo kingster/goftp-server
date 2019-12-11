@@ -8,10 +8,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 )
 
+// Command represents a FTP command.
 type Command interface {
 	IsExtend() bool
 	RequireParam() bool
@@ -57,6 +59,7 @@ var (
 		"RNFR": commandRnfr{},
 		"RNTO": commandRnto{},
 		"RMD":  commandRmd{},
+		"SITE": commandSite{},
 		"SIZE": commandSize{},
 		"STOR": commandStor{},
 		"STRU": commandStru{},
@@ -539,7 +542,7 @@ func (cmd commandMkd) Execute(conn *Conn, param string) {
 	path := conn.buildPath(param)
 	err := conn.driver.MakeDir(path)
 	if err == nil {
-		conn.writeMessage(257, "Directory created")
+		conn.writeMessage(257, fmt.Sprintf(`"%s" created`, path))
 	} else {
 		conn.writeMessage(550, fmt.Sprint("Action not taken: ", err))
 	}
@@ -1037,6 +1040,61 @@ func (cmd commandConf) Execute(conn *Conn, param string) {
 	conn.writeMessage(550, "Action not taken")
 }
 
+// commandSite responds to the SITE FTP command.
+type commandSite struct{}
+
+func (cmd commandSite) IsExtend() bool {
+	return true
+}
+
+func (cmd commandSite) RequireParam() bool {
+	return true
+}
+
+func (cmd commandSite) RequireAuth() bool {
+	return true
+}
+
+func (cmd commandSite) Execute(conn *Conn, param string) {
+	driver, ok := conn.driver.(SiteDriver)
+	if !ok {
+		conn.writeMessage(504, "SITE is an obsolete command")
+		return
+	}
+
+	params := strings.SplitN(param, " ", 2)
+	subcmd := strings.ToUpper(params[0])
+
+	var p string
+	if len(params) == 2 {
+		p = params[1]
+	}
+
+	// handling SITE HELP
+	if subcmd == "HELP" {
+		msg := "The following SITE commands are recognized\r\n "
+		subcmd = strings.ToUpper(strings.Split(p, " ")[0])
+		if subcmd == "HELP" {
+			msg += "Syntax: SITE HELP [<sp> site-command]"
+		} else if subcmd != "" {
+			msg += driver.SiteHelp(subcmd)
+		} else {
+			// list of SITE subcommands
+			msg += "HELP\r\n "
+			msg += strings.Join(driver.SiteCommands(), "\r\n ")
+		}
+		conn.writeMessageMultiline(214, msg)
+		return
+	}
+
+	if err := driver.SiteHandle(subcmd, p); err != nil {
+		conn.writeMessage(500, err.Error())
+		return
+	}
+
+	conn.writeMessage(200, fmt.Sprintf("SITE %s command successful", subcmd))
+}
+
 // commandSize responds to the SIZE FTP command. It returns the size of the
 // requested path in bytes.
 type commandSize struct{}
@@ -1198,6 +1256,14 @@ func (cmd commandUser) RequireAuth() bool {
 
 func (cmd commandUser) Execute(conn *Conn, param string) {
 	conn.reqUser = param
+	if conn.filter != nil {
+		sp := strings.SplitN(conn.conn.RemoteAddr().String(), ":", 2)
+		if err := conn.filter.CheckIP(net.ParseIP(sp[0]), param); err != nil {
+			conn.writeMessage(530, err.Error())
+			conn.Close()
+			return
+		}
+	}
 	if conn.tls || conn.tlsConfig == nil {
 		conn.writeMessage(331, "User name ok, password required")
 	} else {

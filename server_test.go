@@ -22,7 +22,7 @@ func runServer(t *testing.T, execute func()) {
 	os.MkdirAll("./testdata", os.ModePerm)
 
 	var perm = server.NewSimplePerm("test", "test")
-	opt := &server.ServerOpts{
+	opt := &server.Opts{
 		Name: "test ftpd",
 		Factory: &filedriver.FileDriverFactory{
 			RootPath: "./testdata",
@@ -123,7 +123,7 @@ func TestServe(t *testing.T) {
 	var perm = server.NewSimplePerm("test", "test")
 
 	// Server options without hostname or port
-	opt := &server.ServerOpts{
+	opt := &server.Opts{
 		Name: "test ftpd",
 		Factory: &filedriver.FileDriverFactory{
 			RootPath: "./testdata",
